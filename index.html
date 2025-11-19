@@ -204,11 +204,23 @@
         return `${mapping.year}/${mapping.month}/${mapping.day} ${mapping.hour}:${mapping.minute}:${mapping.second}`;
     }
 
-    // 呼叫 MAX API
+    // 呼叫 MAX API (透過 CORS Proxy)
     async function fetchRate() {
         try {
-            // MAX 交易所 USDT/TWD API
-            const response = await fetch('https://max-api.maicoin.com/api/v2/tickers/usdttwd');
+            //原本的 MAX API 網址
+            const targetUrl = 'https://max-api.maicoin.com/api/v2/tickers/usdttwd';
+            
+            // 使用 corsproxy.io 作為中間人來繞過 CORS 限制
+            // 注意：encodeURIComponent 是為了確保網址傳遞正確
+            const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(targetUrl);
+
+            const response = await fetch(proxyUrl);
+            
+            // 檢查回應是否成功
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
             const data = await response.json();
             
             // 取得最後成交價 (last)
@@ -228,7 +240,8 @@
             }
         } catch (error) {
             console.error("API 抓取失敗:", error);
-            document.getElementById('time-text').innerText = "更新失敗，請檢查網路";
+            document.getElementById('time-text').innerText = "更新失敗(CORS/網路)";
+            // 可以在這裡加入重試邏輯，或是顯示更詳細的錯誤給使用者
         }
     }
 
