@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>USDT/TWD 即時匯率計算</title>
+    <style>
+        :root {
+            --border-color: #e0e0e0;
+            --bg-color: #f9f9f9;
+            --orange-accent: #ff9800;
+        }
+
+        body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        .container {
+            background-color: white;
+            width: 100%;
+            max-width: 500px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            overflow: hidden;
+            padding: 20px;
+        }
+
+        /* 通用區塊樣式 */
+        .section {
+            padding: 15px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .section:last-child {
+            border-bottom: none;
+        }
+
+        /* 區域一: 幣別 */
+        .area-1 {
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        /* 區域二: 匯率與時間 */
+        .area-2 {
+            text-align: center;
+        }
+
+        .rate-display {
+            font-size: 20px;
+            margin-bottom: 8px;
+        }
+
+        .rate-number {
+            color: var(--orange-accent);
+            font-weight: bold;
+        }
+
+        .update-time {
+            font-size: 12px;
+            color: #888;
+        }
+
+        /* 區域三: 輸入框 */
+        .area-3 {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .area-3 label {
+            text-align: left;
+            font-size: 16px;
+            color: #555;
+            margin-bottom: 10px;
+        }
+
+        .area-3 input {
+            align-self: flex-end; /* 靠右排列 */
+            text-align: right;   /* 文字靠右 */
+            padding: 10px;
+            font-size: 18px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            width: 200px;
+            outline: none;
+        }
+
+        .area-3 input:focus {
+            border-color: var(--orange-accent);
+        }
+
+        /* 區域四: 計算結果 (左右分割) */
+        .area-4 {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .result-box {
+            flex: 1;
+            text-align: center;
+            padding: 10px;
+            background-color: var(--bg-color);
+            border-radius: 8px;
+            margin: 0 5px;
+        }
+
+        .result-title {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .result-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        /* 載入中的狀態 */
+        .loading {
+            color: #ccc;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- 區域一 -->
+    <div class="section area-1">
+        USDT/TWD
+    </div>
+
+    <!-- 區域二 -->
+    <div class="section area-2">
+        <div class="rate-display">
+            1 USDT = <span id="rate-text" class="rate-number"><span class="loading">載入中...</span></span> TWD
+        </div>
+        <div class="update-time" id="time-text">
+            --
+        </div>
+    </div>
+
+    <!-- 區域三 -->
+    <div class="section area-3">
+        <label for="usdt-amt">輸入您欲兌換的 USDT</label>
+        <!-- 限制輸入類型為數字，透過JS限制長度 -->
+        <input type="number" id="usdt-amt" placeholder="0" oninput="limitInputLength(this)">
+    </div>
+
+    <!-- 區域四 -->
+    <div class="section area-4">
+        <div class="result-box">
+            <div class="result-title">兌換泥碼券</div>
+            <div class="result-value" id="result-nima">0.000</div>
+        </div>
+        <div class="result-box">
+            <div class="result-title">兌換票分</div>
+            <div class="result-value" id="result-points">0.000</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 全域變數
+    let currentRate = 0;
+
+    // 限制輸入框最多 6 位數
+    function limitInputLength(el) {
+        if (el.value.length > 6) {
+            el.value = el.value.slice(0, 6);
+        }
+        calculateResults();
+    }
+
+    // 取得並格式化目前時間 (GMT+8)
+    function getFormattedTime() {
+        const now = new Date();
+        // 使用 Intl.DateTimeFormat 確保時區為 GMT+8 (Asia/Taipei)
+        const options = {
+            timeZone: 'Asia/Taipei',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        };
+        
+        // 格式化後的字串通常是 yyyy/mm/dd hh:mm:ss (視瀏覽器實作可能略有不同，這裡手動重組以確保格式一致)
+        const parts = new Intl.DateTimeFormat('zh-TW', options).formatToParts(now);
+        const mapping = {};
+        parts.forEach(({type, value}) => mapping[type] = value);
+        
+        return `${mapping.year}/${mapping.month}/${mapping.day} ${mapping.hour}:${mapping.minute}:${mapping.second}`;
+    }
+
+    // 呼叫 MAX API
+    async function fetchRate() {
+        try {
+            // MAX 交易所 USDT/TWD API
+            const response = await fetch('https://max-api.maicoin.com/api/v2/tickers/usdttwd');
+            const data = await response.json();
+            
+            // 取得最後成交價 (last)
+            const rateRaw = parseFloat(data.last);
+            
+            if (!isNaN(rateRaw)) {
+                currentRate = rateRaw;
+                
+                // 更新介面：匯率 (小數點後2位)
+                document.getElementById('rate-text').innerText = currentRate.toFixed(2);
+                
+                // 更新介面：時間
+                document.getElementById('time-text').innerText = getFormattedTime();
+                
+                // 重新計算下方數值 (如果使用者已經輸入數字)
+                calculateResults();
+            }
+        } catch (error) {
+            console.error("API 抓取失敗:", error);
+            document.getElementById('time-text').innerText = "更新失敗，請檢查網路";
+        }
+    }
+
+    // 計算區域四的結果
+    function calculateResults() {
+        const amtInput = document.getElementById('usdt-amt');
+        const amount = parseFloat(amtInput.value);
+        
+        const nimaEl = document.getElementById('result-nima');
+        const pointsEl = document.getElementById('result-points');
+
+        if (!isNaN(amount) && currentRate > 0) {
+            // 公式: usdt_amt * (rate + 0.5)
+            const nimaVal = amount * (currentRate + 0.5);
+            // 公式: usdt_amt * rate
+            const pointsVal = amount * currentRate;
+
+            // 取小數下 3 位
+            nimaEl.innerText = nimaVal.toFixed(3);
+            pointsEl.innerText = pointsVal.toFixed(3);
+        } else {
+            nimaEl.innerText = "0.000";
+            pointsEl.innerText = "0.000";
+        }
+    }
+
+    // 設定定時器：每分鐘的第 0 秒執行
+    function scheduleNextUpdate() {
+        const now = new Date();
+        const seconds = now.getSeconds();
+        const milliseconds = now.getMilliseconds();
+        
+        // 計算距離下一個整分鐘還差多少毫秒
+        const msToNextMinute = (60 - seconds) * 1000 - milliseconds;
+
+        // 設定 Timeout 在下一個整點執行
+        setTimeout(() => {
+            fetchRate();
+            // 之後每 60 秒 (1分鐘) 執行一次
+            setInterval(fetchRate, 60000);
+        }, msToNextMinute);
+    }
+
+    // 初始化
+    window.onload = () => {
+        // 1. 剛開啟網頁時呼叫
+        fetchRate();
+        
+        // 2. 綁定輸入框事件 (每次打字都計算)
+        document.getElementById('usdt-amt').addEventListener('input', calculateResults);
+        
+        // 3. 設定每分鐘 0 秒更新的邏輯
+        scheduleNextUpdate();
+    };
+
+</script>
+</body>
+</html>
