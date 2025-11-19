@@ -204,44 +204,64 @@
         return `${mapping.year}/${mapping.month}/${mapping.day} ${mapping.hour}:${mapping.minute}:${mapping.second}`;
     }
 
-    // 呼叫 MAX API (透過 CORS Proxy)
+    // 呼叫 API (包含自動備援機制)
     async function fetchRate() {
+        const rateText = document.getElementById('rate-text');
+        const timeText = document.getElementById('time-text');
+
+        // 來源 1: MAX 交易所 (透過 corsproxy.io)
+        // corsproxy.io 比 allorigins 更不容易被交易所封鎖
+        const maxUrl = 'https://corsproxy.io/?' + encodeURIComponent('https://max-api.maicoin.com/api/v2/tickers/usdttwd');
+        
+        // 來源 2: CoinGecko (備用方案，通常不會擋)
+        const backupUrl = 'https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=twd';
+
         try {
-            //原本的 MAX API 網址
-            const targetUrl = 'https://max-api.maicoin.com/api/v2/tickers/usdttwd';
-            
-            // 使用 corsproxy.io 作為中間人來繞過 CORS 限制
-            // 注意：encodeURIComponent 是為了確保網址傳遞正確
-            const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl);
-
-            const response = await fetch(proxyUrl);
-            
-            // 檢查回應是否成功
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
+            // --- 嘗試第一順位: MAX ---
+            const response = await fetch(maxUrl);
+            if (!response.ok) throw new Error('MAX Proxy Blocked');
             const data = await response.json();
             
-            // 取得最後成交價 (last)
+            // MAX 的資料格式: { last: "32.50", ... }
             const rateRaw = parseFloat(data.last);
+            updateUI(rateRaw, "MAX 交易所");
+
+        } catch (errorMax) {
+            console.warn("MAX API 抓取失敗，切換至備用來源:", errorMax);
             
-            if (!isNaN(rateRaw)) {
-                currentRate = rateRaw;
-                
-                // 更新介面：匯率 (小數點後2位)
-                document.getElementById('rate-text').innerText = currentRate.toFixed(2);
-                
-                // 更新介面：時間
-                document.getElementById('time-text').innerText = getFormattedTime();
-                
-                // 重新計算下方數值 (如果使用者已經輸入數字)
-                calculateResults();
+            try {
+                // --- 嘗試第二順位: CoinGecko ---
+                // CoinGecko 不需要代理通常可以直接呼叫
+                const responseBackup = await fetch(backupUrl);
+                if (!responseBackup.ok) throw new Error('Backup API Error');
+                const dataBackup = await responseBackup.json();
+
+                // CoinGecko 的資料格式: { tether: { twd: 32.5 } }
+                const rateRaw = dataBackup.tether.twd;
+                updateUI(rateRaw, "CoinGecko (備用)");
+
+            } catch (errorBackup) {
+                console.error("所有來源皆失敗:", errorBackup);
+                rateText.innerHTML = "<span style='color:red;font-size:16px'>暫無數據</span>";
+                timeText.innerText = "無法取得匯率，請稍後重試";
             }
-        } catch (error) {
-            console.error("API 抓取失敗:", error);
-            document.getElementById('time-text').innerText = "更新失敗(CORS/網路)";
-            // 可以在這裡加入重試邏輯，或是顯示更詳細的錯誤給使用者
+        }
+    }
+
+    // 統一更新介面的函式
+    function updateUI(rate, sourceName) {
+        if (!isNaN(rate)) {
+            currentRate = rate;
+            
+            // 更新匯率文字
+            document.getElementById('rate-text').innerText = currentRate.toFixed(2);
+            
+            // 更新時間與來源標記
+            const timeStr = getFormattedTime();
+            document.getElementById('time-text').innerText = `${timeStr} (來源: ${sourceName})`;
+            
+            // 重新計算
+            calculateResults();
         }
     }
 
