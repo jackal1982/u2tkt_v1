@@ -151,7 +151,8 @@
     <!-- 區域三 -->
     <div class="section area-3">
         <label for="usdt-amt">輸入您欲兌換的 USDT</label>
-        <input type="number" id="usdt-amt" placeholder="0" oninput="limitInputLength(this)">
+        <!-- type="tel" 在手機上會喚起純數字鍵盤，體驗較好，且我們用JS控制輸入格式 -->
+        <input type="tel" id="usdt-amt" placeholder="0" oninput="limitInputLength(this)">
     </div>
 
     <!-- 區域四 -->
@@ -185,20 +186,42 @@
         return `${m.year}/${m.month}/${m.day} ${m.hour}:${m.minute}:${m.second}`;
     }
 
-    // 限制輸入長度並計算
+    // -------------------------------------------------------
+    // ★ 修改區域：限制輸入為 6 位數且只能是正整數
+    // -------------------------------------------------------
     function limitInputLength(el) {
-        if (el.value.length > 6) el.value = el.value.slice(0, 6);
+        // 1. 將任何非數字 (0-9) 的字元替換為空字串 (移除小數點、負號、文字)
+        let val = el.value.replace(/[^\d]/g, '');
+        
+        // 2. 移除開頭多餘的 0 (例如 0123 -> 123, 但保留單獨的 0)
+        if (val.length > 1 && val.startsWith('0')) {
+             val = val.replace(/^0+/, '');
+        }
+
+        // 3. 限制長度最多 6 位
+        if (val.length > 6) {
+            val = val.slice(0, 6);
+        }
+
+        // 4. 更新欄位值
+        el.value = val;
+
+        // 5. 觸發計算
         calculateResults();
     }
 
     function calculateResults() {
         const amtInput = document.getElementById('usdt-amt');
-        const amount = parseFloat(amtInput.value);
+        // 因為已經過濾過，這裡可以直接轉整數，若為空則視為 0
+        const amount = parseInt(amtInput.value) || 0;
+        
         const nimaEl = document.getElementById('result-nima');
         const pointsEl = document.getElementById('result-points');
 
-        if (!isNaN(amount) && currentRate > 0) {
+        if (amount > 0 && currentRate > 0) {
+            // 泥碼券公式: amount * (rate + 0.5)
             nimaEl.innerText = (amount * (currentRate + 0.5)).toFixed(3);
+            // 票分公式: amount * rate
             pointsEl.innerText = (amount * currentRate).toFixed(3);
         } else {
             nimaEl.innerText = "0.000";
@@ -206,11 +229,10 @@
         }
     }
 
-    // 抓取 CoinGecko 資料 (專門針對 MAX 交易所)
+    // 抓取 CoinGecko 資料
     async function fetchRate() {
         const rateEl = document.getElementById('rate-text');
         const timeEl = document.getElementById('time-text');
-
         // CoinGecko API: 取得 Tether 在 MAX 交易所 (max_maicoin) 的交易對資料
         const url = 'https://api.coingecko.com/api/v3/exchanges/max_maicoin/tickers?coin_ids=tether';
 
@@ -219,25 +241,19 @@
             if (!response.ok) throw new Error('Network response was not ok');
             
             const data = await response.json();
-            
-            // 尋找 USDT/TWD 交易對
-            // CoinGecko 回傳的 tickers 陣列中，找到 target 為 TWD 的資料
             const ticker = data.tickers.find(t => t.target === 'TWD' || t.target === 'NTD');
 
             if (ticker) {
-                currentRate = ticker.last; // 取得最新成交價
-                
+                currentRate = ticker.last;
                 rateEl.innerText = currentRate.toFixed(2);
-                timeEl.innerText = getFormattedTime(); // 更新為現在時間
-                
-                calculateResults(); // 重新計算數值
+                timeEl.innerText = getFormattedTime();
+                calculateResults();
             } else {
                 throw new Error('找不到 TWD 交易對');
             }
             
         } catch (error) {
             console.error("抓取失敗:", error);
-            // 如果失敗，保持舊的數據，只更新狀態文字
             if(currentRate === 0) {
                rateEl.innerHTML = "<span style='color:red;font-size:14px'>暫無數據</span>";
             }
@@ -247,12 +263,8 @@
 
     // 初始化
     window.onload = () => {
-        fetchRate(); // 第一次執行
-
-        // 設定每 20 秒更新一次 (CoinGecko 免費版限制約每分鐘 10-50 次請求，20秒一次非常安全)
+        fetchRate();
         fetchInterval = setInterval(fetchRate, 20000);
-
-        // 綁定輸入事件
         document.getElementById('usdt-amt').addEventListener('input', calculateResults);
     };
 </script>
