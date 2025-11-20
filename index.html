@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>USDT/TWD 即時匯率計算</title>
+    <title>USDT/TWD 即時匯率 (WebSocket版)</title>
     <style>
         :root {
             --border-color: #e0e0e0;
             --bg-color: #f9f9f9;
             --orange-accent: #ff9800;
+            --green-accent: #4caf50;
         }
 
         body {
@@ -31,7 +32,6 @@
             padding: 20px;
         }
 
-        /* 通用區塊樣式 */
         .section {
             padding: 15px 0;
             border-bottom: 1px solid var(--border-color);
@@ -41,7 +41,7 @@
             border-bottom: none;
         }
 
-        /* 區域一: 幣別 */
+        /* 區域一 */
         .area-1 {
             text-align: center;
             font-size: 24px;
@@ -49,7 +49,7 @@
             color: #333;
         }
 
-        /* 區域二: 匯率與時間 */
+        /* 區域二 */
         .area-2 {
             text-align: center;
         }
@@ -62,14 +62,32 @@
         .rate-number {
             color: var(--orange-accent);
             font-weight: bold;
+            transition: color 0.3s ease;
         }
 
         .update-time {
             font-size: 12px;
             color: #888;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
         }
 
-        /* 區域三: 輸入框 */
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #ccc;
+            display: inline-block;
+        }
+
+        .status-active {
+            background-color: var(--green-accent);
+            box-shadow: 0 0 4px var(--green-accent);
+        }
+
+        /* 區域三 */
         .area-3 {
             display: flex;
             flex-direction: column;
@@ -83,8 +101,8 @@
         }
 
         .area-3 input {
-            align-self: flex-end; /* 靠右排列 */
-            text-align: right;   /* 文字靠右 */
+            align-self: flex-end;
+            text-align: right;
             padding: 10px;
             font-size: 18px;
             border: 1px solid #ccc;
@@ -97,7 +115,7 @@
             border-color: var(--orange-accent);
         }
 
-        /* 區域四: 計算結果 (左右分割) */
+        /* 區域四 */
         .area-4 {
             display: flex;
             justify-content: space-between;
@@ -123,12 +141,6 @@
             font-weight: bold;
             color: #333;
         }
-
-        /* 載入中的狀態 */
-        .loading {
-            color: #ccc;
-            font-size: 14px;
-        }
     </style>
 </head>
 <body>
@@ -142,17 +154,17 @@
     <!-- 區域二 -->
     <div class="section area-2">
         <div class="rate-display">
-            1 USDT = <span id="rate-text" class="rate-number"><span class="loading">載入中...</span></span> TWD
+            1 USDT = <span id="rate-text" class="rate-number">--.--</span> TWD
         </div>
-        <div class="update-time" id="time-text">
-            --
+        <div class="update-time">
+            <span id="status-dot" class="status-dot"></span>
+            <span id="time-text">連線中...</span>
         </div>
     </div>
 
     <!-- 區域三 -->
     <div class="section area-3">
         <label for="usdt-amt">輸入您欲兌換的 USDT</label>
-        <!-- 限制輸入類型為數字，透過JS限制長度 -->
         <input type="number" id="usdt-amt" placeholder="0" oninput="limitInputLength(this)">
     </div>
 
@@ -170,151 +182,136 @@
 </div>
 
 <script>
-    // 全域變數
     let currentRate = 0;
+    let ws = null;
+    let heartbeatInterval = null;
 
-    // 限制輸入框最多 6 位數
+    // 格式化時間
+    function getFormattedTime() {
+        const now = new Date();
+        const options = {
+            timeZone: 'Asia/Taipei',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+        };
+        const parts = new Intl.DateTimeFormat('zh-TW', options).formatToParts(now);
+        const m = {};
+        parts.forEach(({type, value}) => m[type] = value);
+        return `${m.year}/${m.month}/${m.day} ${m.hour}:${m.minute}:${m.second}`;
+    }
+
+    // 限制輸入與計算
     function limitInputLength(el) {
-        if (el.value.length > 6) {
-            el.value = el.value.slice(0, 6);
-        }
+        if (el.value.length > 6) el.value = el.value.slice(0, 6);
         calculateResults();
     }
 
-    // 取得並格式化目前時間 (GMT+8)
-    function getFormattedTime() {
-        const now = new Date();
-        // 使用 Intl.DateTimeFormat 確保時區為 GMT+8 (Asia/Taipei)
-        const options = {
-            timeZone: 'Asia/Taipei',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: false
-        };
-        
-        // 格式化後的字串通常是 yyyy/mm/dd hh:mm:ss (視瀏覽器實作可能略有不同，這裡手動重組以確保格式一致)
-        const parts = new Intl.DateTimeFormat('zh-TW', options).formatToParts(now);
-        const mapping = {};
-        parts.forEach(({type, value}) => mapping[type] = value);
-        
-        return `${mapping.year}/${mapping.month}/${mapping.day} ${mapping.hour}:${mapping.minute}:${mapping.second}`;
-    }
-
-    // 呼叫 API (包含自動備援機制)
-    async function fetchRate() {
-        const rateText = document.getElementById('rate-text');
-        const timeText = document.getElementById('time-text');
-
-        // 來源 1: MAX 交易所 (透過 corsproxy.io)
-        // corsproxy.io 比 allorigins 更不容易被交易所封鎖
-        const maxUrl = 'https://corsproxy.io/?' + encodeURIComponent('https://max-api.maicoin.com/api/v2/tickers/usdttwd');
-        
-        // 來源 2: CoinGecko (備用方案，通常不會擋)
-        const backupUrl = 'https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=twd';
-
-        try {
-            // --- 嘗試第一順位: MAX ---
-            const response = await fetch(maxUrl);
-            if (!response.ok) throw new Error('MAX Proxy Blocked');
-            const data = await response.json();
-            
-            // MAX 的資料格式: { last: "32.50", ... }
-            const rateRaw = parseFloat(data.last);
-            updateUI(rateRaw, "MAX 交易所");
-
-        } catch (errorMax) {
-            console.warn("MAX API 抓取失敗，切換至備用來源:", errorMax);
-            
-            try {
-                // --- 嘗試第二順位: CoinGecko ---
-                // CoinGecko 不需要代理通常可以直接呼叫
-                const responseBackup = await fetch(backupUrl);
-                if (!responseBackup.ok) throw new Error('Backup API Error');
-                const dataBackup = await responseBackup.json();
-
-                // CoinGecko 的資料格式: { tether: { twd: 32.5 } }
-                const rateRaw = dataBackup.tether.twd;
-                updateUI(rateRaw, "CoinGecko (備用)");
-
-            } catch (errorBackup) {
-                console.error("所有來源皆失敗:", errorBackup);
-                rateText.innerHTML = "<span style='color:red;font-size:16px'>暫無數據</span>";
-                timeText.innerText = "無法取得匯率，請稍後重試";
-            }
-        }
-    }
-
-    // 統一更新介面的函式
-    function updateUI(rate, sourceName) {
-        if (!isNaN(rate)) {
-            currentRate = rate;
-            
-            // 更新匯率文字
-            document.getElementById('rate-text').innerText = currentRate.toFixed(2);
-            
-            // 更新時間與來源標記
-            const timeStr = getFormattedTime();
-            document.getElementById('time-text').innerText = `${timeStr} (來源: ${sourceName})`;
-            
-            // 重新計算
-            calculateResults();
-        }
-    }
-
-    // 計算區域四的結果
     function calculateResults() {
         const amtInput = document.getElementById('usdt-amt');
         const amount = parseFloat(amtInput.value);
-        
         const nimaEl = document.getElementById('result-nima');
         const pointsEl = document.getElementById('result-points');
 
         if (!isNaN(amount) && currentRate > 0) {
-            // 公式: usdt_amt * (rate + 0.5)
-            const nimaVal = amount * (currentRate + 0.5);
-            // 公式: usdt_amt * rate
-            const pointsVal = amount * currentRate;
-
-            // 取小數下 3 位
-            nimaEl.innerText = nimaVal.toFixed(3);
-            pointsEl.innerText = pointsVal.toFixed(3);
+            nimaEl.innerText = (amount * (currentRate + 0.5)).toFixed(3);
+            pointsEl.innerText = (amount * currentRate).toFixed(3);
         } else {
             nimaEl.innerText = "0.000";
             pointsEl.innerText = "0.000";
         }
     }
 
-    // 設定定時器：每分鐘的第 0 秒執行
-    function scheduleNextUpdate() {
-        const now = new Date();
-        const seconds = now.getSeconds();
-        const milliseconds = now.getMilliseconds();
-        
-        // 計算距離下一個整分鐘還差多少毫秒
-        const msToNextMinute = (60 - seconds) * 1000 - milliseconds;
+    // --------------------------------------------------
+    // WebSocket 核心邏輯
+    // --------------------------------------------------
+    function initWebSocket() {
+        const statusDot = document.getElementById('status-dot');
+        const timeText = document.getElementById('time-text');
 
-        // 設定 Timeout 在下一個整點執行
-        setTimeout(() => {
-            fetchRate();
-            // 之後每 60 秒 (1分鐘) 執行一次
-            setInterval(fetchRate, 60000);
-        }, msToNextMinute);
+        // MAX 交易所公開 WebSocket 網址
+        const wsUrl = 'wss://max-stream.maicoin.com/ws';
+
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+            console.log("WebSocket 已連線");
+            statusDot.classList.add('status-active');
+            timeText.innerText = "即時連線中 " + getFormattedTime();
+
+            // 訂閱 USDT/TWD 的 ticker 頻道
+            const subMsg = {
+                action: "sub",
+                subscriptions: [
+                    { channel: "ticker", market: "usdttwd" }
+                ]
+            };
+            ws.send(JSON.stringify(subMsg));
+            
+            // 啟動心跳機制 (每30秒送一次 ping，防止斷線)
+            startHeartbeat();
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                
+                // 解析 Ticker 資料
+                // MAX 回傳格式範例: {"c":"ticker", "k": { "c": "32.45", ... }, ...}
+                if (data.c === 'ticker' && data.k) {
+                    // k.c 是收盤價(最新成交價)
+                    const newPrice = parseFloat(data.k.c);
+                    
+                    if (!isNaN(newPrice)) {
+                        currentRate = newPrice;
+                        
+                        // 更新畫面
+                        document.getElementById('rate-text').innerText = currentRate.toFixed(2);
+                        document.getElementById('time-text').innerText = getFormattedTime();
+                        
+                        // 觸發重新計算
+                        calculateResults();
+                    }
+                }
+            } catch (e) {
+                // 忽略非 JSON 格式的訊息
+            }
+        };
+
+        ws.onclose = () => {
+            console.log("WebSocket 已斷線，嘗試重連...");
+            statusDot.classList.remove('status-active');
+            timeText.innerText = "連線中斷，重連中...";
+            stopHeartbeat();
+            
+            // 3秒後自動重連
+            setTimeout(initWebSocket, 3000);
+        };
+
+        ws.onerror = (err) => {
+            console.error("WebSocket 錯誤:", err);
+            ws.close();
+        };
     }
 
-    // 初始化
+    function startHeartbeat() {
+        stopHeartbeat();
+        heartbeatInterval = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send('ping'); // 許多交易所需要定期 ping 保持連線
+            }
+        }, 30000);
+    }
+
+    function stopHeartbeat() {
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+    }
+
+    // 啟動
     window.onload = () => {
-        // 1. 剛開啟網頁時呼叫
-        fetchRate();
+        initWebSocket();
         
-        // 2. 綁定輸入框事件 (每次打字都計算)
+        // 綁定輸入框
         document.getElementById('usdt-amt').addEventListener('input', calculateResults);
-        
-        // 3. 設定每分鐘 0 秒更新的邏輯
-        scheduleNextUpdate();
     };
 
 </script>
