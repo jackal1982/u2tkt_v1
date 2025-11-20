@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>USDT/TWD 即時匯率 (WebSocket版)</title>
+    <title>USDT/TWD 匯率計算 (MAX via CoinGecko)</title>
     <style>
         :root {
             --border-color: #e0e0e0;
@@ -62,29 +62,14 @@
         .rate-number {
             color: var(--orange-accent);
             font-weight: bold;
-            transition: color 0.3s ease;
         }
 
         .update-time {
             font-size: 12px;
             color: #888;
             display: flex;
-            align-items: center;
             justify-content: center;
             gap: 5px;
-        }
-
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background-color: #ccc;
-            display: inline-block;
-        }
-
-        .status-active {
-            background-color: var(--green-accent);
-            box-shadow: 0 0 4px var(--green-accent);
         }
 
         /* 區域三 */
@@ -141,6 +126,8 @@
             font-weight: bold;
             color: #333;
         }
+        
+        .loading { font-size: 14px; color: #999; font-weight: normal; }
     </style>
 </head>
 <body>
@@ -154,11 +141,10 @@
     <!-- 區域二 -->
     <div class="section area-2">
         <div class="rate-display">
-            1 USDT = <span id="rate-text" class="rate-number">--.--</span> TWD
+            1 USDT = <span id="rate-text" class="rate-number"><span class="loading">載入中...</span></span> TWD
         </div>
-        <div class="update-time">
-            <span id="status-dot" class="status-dot"></span>
-            <span id="time-text">連線中...</span>
+        <div class="update-time" id="time-text">
+            準備載入...
         </div>
     </div>
 
@@ -183,10 +169,9 @@
 
 <script>
     let currentRate = 0;
-    let ws = null;
-    let heartbeatInterval = null;
+    let fetchInterval = null;
 
-    // 格式化時間
+    // 取得目前時間 (GMT+8)
     function getFormattedTime() {
         const now = new Date();
         const options = {
@@ -200,7 +185,7 @@
         return `${m.year}/${m.month}/${m.day} ${m.hour}:${m.minute}:${m.second}`;
     }
 
-    // 限制輸入與計算
+    // 限制輸入長度並計算
     function limitInputLength(el) {
         if (el.value.length > 6) el.value = el.value.slice(0, 6);
         calculateResults();
@@ -221,99 +206,55 @@
         }
     }
 
-    // --------------------------------------------------
-    // WebSocket 核心邏輯
-    // --------------------------------------------------
-    function initWebSocket() {
-        const statusDot = document.getElementById('status-dot');
-        const timeText = document.getElementById('time-text');
+    // 抓取 CoinGecko 資料 (專門針對 MAX 交易所)
+    async function fetchRate() {
+        const rateEl = document.getElementById('rate-text');
+        const timeEl = document.getElementById('time-text');
 
-        // MAX 交易所公開 WebSocket 網址
-        const wsUrl = 'wss://max-stream.maicoin.com/ws';
+        // CoinGecko API: 取得 Tether 在 MAX 交易所 (max_maicoin) 的交易對資料
+        const url = 'https://api.coingecko.com/api/v3/exchanges/max_maicoin/tickers?coin_ids=tether';
 
-        ws = new WebSocket(wsUrl);
-
-        ws.onopen = () => {
-            console.log("WebSocket 已連線");
-            statusDot.classList.add('status-active');
-            timeText.innerText = "即時連線中 " + getFormattedTime();
-
-            // 訂閱 USDT/TWD 的 ticker 頻道
-            const subMsg = {
-                action: "sub",
-                subscriptions: [
-                    { channel: "ticker", market: "usdttwd" }
-                ]
-            };
-            ws.send(JSON.stringify(subMsg));
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('Network response was not ok');
             
-            // 啟動心跳機制 (每30秒送一次 ping，防止斷線)
-            startHeartbeat();
-        };
+            const data = await response.json();
+            
+            // 尋找 USDT/TWD 交易對
+            // CoinGecko 回傳的 tickers 陣列中，找到 target 為 TWD 的資料
+            const ticker = data.tickers.find(t => t.target === 'TWD' || t.target === 'NTD');
 
-        ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
+            if (ticker) {
+                currentRate = ticker.last; // 取得最新成交價
                 
-                // 解析 Ticker 資料
-                // MAX 回傳格式範例: {"c":"ticker", "k": { "c": "32.45", ... }, ...}
-                if (data.c === 'ticker' && data.k) {
-                    // k.c 是收盤價(最新成交價)
-                    const newPrice = parseFloat(data.k.c);
-                    
-                    if (!isNaN(newPrice)) {
-                        currentRate = newPrice;
-                        
-                        // 更新畫面
-                        document.getElementById('rate-text').innerText = currentRate.toFixed(2);
-                        document.getElementById('time-text').innerText = getFormattedTime();
-                        
-                        // 觸發重新計算
-                        calculateResults();
-                    }
-                }
-            } catch (e) {
-                // 忽略非 JSON 格式的訊息
+                rateEl.innerText = currentRate.toFixed(2);
+                timeEl.innerText = getFormattedTime(); // 更新為現在時間
+                
+                calculateResults(); // 重新計算數值
+            } else {
+                throw new Error('找不到 TWD 交易對');
             }
-        };
-
-        ws.onclose = () => {
-            console.log("WebSocket 已斷線，嘗試重連...");
-            statusDot.classList.remove('status-active');
-            timeText.innerText = "連線中斷，重連中...";
-            stopHeartbeat();
             
-            // 3秒後自動重連
-            setTimeout(initWebSocket, 3000);
-        };
-
-        ws.onerror = (err) => {
-            console.error("WebSocket 錯誤:", err);
-            ws.close();
-        };
-    }
-
-    function startHeartbeat() {
-        stopHeartbeat();
-        heartbeatInterval = setInterval(() => {
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send('ping'); // 許多交易所需要定期 ping 保持連線
+        } catch (error) {
+            console.error("抓取失敗:", error);
+            // 如果失敗，保持舊的數據，只更新狀態文字
+            if(currentRate === 0) {
+               rateEl.innerHTML = "<span style='color:red;font-size:14px'>暫無數據</span>";
             }
-        }, 30000);
+            timeEl.innerText = "更新失敗，稍後重試";
+        }
     }
 
-    function stopHeartbeat() {
-        if (heartbeatInterval) clearInterval(heartbeatInterval);
-    }
-
-    // 啟動
+    // 初始化
     window.onload = () => {
-        initWebSocket();
-        
-        // 綁定輸入框
+        fetchRate(); // 第一次執行
+
+        // 設定每 20 秒更新一次 (CoinGecko 免費版限制約每分鐘 10-50 次請求，20秒一次非常安全)
+        fetchInterval = setInterval(fetchRate, 20000);
+
+        // 綁定輸入事件
         document.getElementById('usdt-amt').addEventListener('input', calculateResults);
     };
-
 </script>
 </body>
 </html>
