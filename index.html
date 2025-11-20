@@ -151,7 +151,7 @@
     <!-- 區域三 -->
     <div class="section area-3">
         <label for="usdt-amt">輸入您欲兌換的 USDT</label>
-        <!-- type="tel" 在手機上會喚起純數字鍵盤，體驗較好，且我們用JS控制輸入格式 -->
+        <!-- 限制只能輸入正整數 -->
         <input type="tel" id="usdt-amt" placeholder="0" oninput="limitInputLength(this)">
     </div>
 
@@ -186,43 +186,43 @@
         return `${m.year}/${m.month}/${m.day} ${m.hour}:${m.minute}:${m.second}`;
     }
 
-    // -------------------------------------------------------
-    // ★ 修改區域：限制輸入為 6 位數且只能是正整數
-    // -------------------------------------------------------
+    // 限制輸入長度與正整數
     function limitInputLength(el) {
-        // 1. 將任何非數字 (0-9) 的字元替換為空字串 (移除小數點、負號、文字)
-        let val = el.value.replace(/[^\d]/g, '');
+        let val = el.value.replace(/[^\d]/g, ''); // 移除所有非數字
         
-        // 2. 移除開頭多餘的 0 (例如 0123 -> 123, 但保留單獨的 0)
         if (val.length > 1 && val.startsWith('0')) {
-             val = val.replace(/^0+/, '');
+             val = val.replace(/^0+/, ''); // 移除開頭多餘的 0
         }
 
-        // 3. 限制長度最多 6 位
         if (val.length > 6) {
-            val = val.slice(0, 6);
+            val = val.slice(0, 6); // 限制 6 位數
         }
 
-        // 4. 更新欄位值
         el.value = val;
-
-        // 5. 觸發計算
         calculateResults();
     }
 
+    // ------------------------------------------------------------------
+    // ★ 修改重點：使用「小數點後2位」的匯率來進行計算
+    // ------------------------------------------------------------------
     function calculateResults() {
         const amtInput = document.getElementById('usdt-amt');
-        // 因為已經過濾過，這裡可以直接轉整數，若為空則視為 0
         const amount = parseInt(amtInput.value) || 0;
         
         const nimaEl = document.getElementById('result-nima');
         const pointsEl = document.getElementById('result-points');
 
         if (amount > 0 && currentRate > 0) {
-            // 泥碼券公式: amount * (rate + 0.5)
-            nimaEl.innerText = (amount * (currentRate + 0.5)).toFixed(3);
-            // 票分公式: amount * rate
-            pointsEl.innerText = (amount * currentRate).toFixed(3);
+            // 1. 先將 API 原始匯率轉為小數點後 2 位 (字串 -> 浮點數)
+            // 例如: 32.128 -> "32.13" -> 32.13
+            const fixedRate = parseFloat(currentRate.toFixed(2));
+
+            // 2. 使用處理過的 fixedRate 進行計算
+            // 泥碼券公式: amount * (fixedRate + 0.5)
+            nimaEl.innerText = (amount * (fixedRate + 0.5)).toFixed(3);
+            
+            // 票分公式: amount * fixedRate
+            pointsEl.innerText = (amount * fixedRate).toFixed(3);
         } else {
             nimaEl.innerText = "0.000";
             pointsEl.innerText = "0.000";
@@ -233,7 +233,6 @@
     async function fetchRate() {
         const rateEl = document.getElementById('rate-text');
         const timeEl = document.getElementById('time-text');
-        // CoinGecko API: 取得 Tether 在 MAX 交易所 (max_maicoin) 的交易對資料
         const url = 'https://api.coingecko.com/api/v3/exchanges/max_maicoin/tickers?coin_ids=tether';
 
         try {
@@ -244,8 +243,11 @@
             const ticker = data.tickers.find(t => t.target === 'TWD' || t.target === 'NTD');
 
             if (ticker) {
-                currentRate = ticker.last;
-                rateEl.innerText = currentRate.toFixed(2);
+                currentRate = ticker.last; // 這裡是原始精確值 (例如 32.128)
+                
+                // 介面顯示小數點後 2 位 (會四捨五入)
+                rateEl.innerText = currentRate.toFixed(2); 
+                
                 timeEl.innerText = getFormattedTime();
                 calculateResults();
             } else {
