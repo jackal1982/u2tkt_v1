@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
@@ -213,9 +213,9 @@
         const pointsEl = document.getElementById('result-points');
 
         if (amount > 0 && currentRate > 0) {
-            // 1. 先將 API 原始匯率轉為小數點後 2 位 (字串 -> 浮點數)
-            // 例如: 32.128 -> "32.13" -> 32.13
-            const fixedRate = parseFloat(currentRate.toFixed(2));
+            // 1. 先將 API 原始匯率轉為小數點後 3 位 (字串 -> 浮點數)
+            // 例如: 32.1285 -> "32.129" -> 32.129
+            const fixedRate = parseFloat(currentRate.toFixed(3));
 
             // 2. 使用處理過的 fixedRate 進行計算
             // 泥碼券公式: amount * (fixedRate + 0.5)
@@ -245,8 +245,8 @@
             if (ticker) {
                 currentRate = ticker.last; // 這裡是原始精確值 (例如 32.128)
                 
-                // 介面顯示小數點後 2 位 (會四捨五入)
-                rateEl.innerText = currentRate.toFixed(2); 
+                // 介面顯示小數點後 3 位 (會四捨五入)
+                rateEl.innerText = currentRate.toFixed(3); 
                 
                 timeEl.innerText = getFormattedTime();
                 calculateResults();
